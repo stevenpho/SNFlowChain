@@ -1,1 +1,1 @@
-# SNFlowChain (lightweight flow stream flow control)
+# SNFlowChain (lightweight flow stream control)
