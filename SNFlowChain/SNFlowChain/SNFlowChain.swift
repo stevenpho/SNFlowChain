@@ -2,12 +2,19 @@
 //  SNFlowChain.swift
 //  SNFlowChain
 //
-//  Created by Lee Steve on 2025/4/23.
+//  Created by Lee Steven on 2025/4/23.
 //
 
 import Foundation
-
+/// 可以不需要加上 weak self 會自動釋放
 class SNFlowChain {
+    
+    enum Queue : Equatable {
+        case main
+        case global
+        case none
+    }
+    
     @discardableResult
     static func start() -> SNFlowChain {
         return SNFlowChain()
@@ -17,6 +24,7 @@ class SNFlowChain {
     typealias CatchBlock = (Error) -> Void
     typealias FinallyBlock = () -> Void
     private var id = 0
+    private var queue : Queue = .none
     private var currentStep: StepBlock?
     private var lastChain: SNFlowChain?
     private var nextChain: SNFlowChain?
@@ -28,24 +36,24 @@ class SNFlowChain {
     init() {}
     
     @discardableResult
-    func then(_ step: @escaping StepBlock) -> SNFlowChain {
-        if (self.id == 0 && self.conditionCheck?() == false) {
-            self.finallyBlock?()
-            return self
+    func commit() -> SNFlowChain {
+        // 找到最早的 chain 開始點
+        var root: SNFlowChain = self
+        while let previous = root.lastChain {
+            root = previous
         }
+        // 執行第一個
+        root.execute(shouldContinue: true)
+        return self
+    }
+    
+    @discardableResult
+    func then(_ step: @escaping StepBlock) -> SNFlowChain {
         let next = SNFlowChain()
         next.lastChain = self
         next.id = self.id + 1
         self.currentStep = step
         self.nextChain = next
-        if (self.id == 0){
-            step { isContiune in
-                next.execute(shouldContinue: isContiune)
-            }
-        } else {
-            next.currentStep = step
-            next.nextChain = next
-        }
         return next
     }
     
@@ -69,12 +77,40 @@ class SNFlowChain {
     }
     
     @discardableResult
+    func queue(_ queue: Queue) -> SNFlowChain {
+        self.queue = queue
+        return self
+    }
+    
+    @discardableResult
     func log(message: String) -> SNFlowChain {
         self.logMessage = message
-        if (self.id == 0 && (self.conditionCheck?() == true || self.conditionCheck == nil)){
-            self.showLogMessage()
-        }
         return self
+    }
+    
+    private func executeFinallyBlock() {
+        self.finallyBlock?()
+        self.destroy()
+    }
+    
+    private func destroy() {
+        
+        if (self.currentStep != nil) {
+            self.currentStep = nil
+        }
+        
+        if (self.finallyBlock != nil) {
+            self.finallyBlock = nil
+        }
+        
+        if (self.conditionCheck != nil) {
+            self.conditionCheck = nil
+        }
+        
+        if (self.lastChain != nil) {
+            self.lastChain?.destroy()
+            return
+        }
     }
     
     private func showLogMessage() {
@@ -82,55 +118,98 @@ class SNFlowChain {
         print("[LOG] \(message)")
     }
     
-    private func execute(shouldContinue: Bool? = nil) {
+    private func execute(shouldContinue: Bool) {
         // Log Message
         self.showLogMessage()
         
-        if (shouldContinue == false){
-            self.finallyBlock?()
+        guard shouldContinue else {
+            self.executeFinallyBlock()
             return
         }
+        
         // Condition Check
-        guard let condition = self.conditionCheck, condition() else {
-            self.finallyBlock?()
+        guard let condition = self.conditionCheck else {
+            self.checkRunDealyIfNeeded()
             return
         }
-        // Delay
-        guard let delay = self.delaySeconds else {
-            //self.runOnMain {
+        
+        guard condition() else {
+            self.executeFinallyBlock()
+            return
+        }
+        
+        self.checkRunDealyIfNeeded()
+    }
+    
+    private func checkRunDealyIfNeeded() {
+        switch self.queue {
+        case .main:
+            // Delay
+            guard let delay = self.delaySeconds else {
+                self.runOnMain { [weak self] in
+                    self?.runStep()
+                }
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 self.runStep()
-            //}
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            self.runStep()
+            }
+        case .global:
+            // Delay
+            guard let delay = self.delaySeconds else {
+                self.runOnGlobal { [weak self] in
+                    self?.runStep()
+                }
+                return
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+                self.runStep()
+            }
+        case .none:
+            // Delay
+            guard let delay = self.delaySeconds else {
+                self.runStep()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                self.runStep()
+            }
         }
     }
     
     private func runStep() {
         guard let step = self.currentStep else {
-            self.finallyBlock?()
+            self.executeFinallyBlock()
             return
         }
+        
         step { [weak self] shouldContinue in
             guard let self = self else { return }
-            if shouldContinue {
-                if let nextChain = self.nextChain {
-                    nextChain.execute()
-                    return
-                }
-                self.finallyBlock?()
-            } else {
-                self.finallyBlock?()
+            guard shouldContinue else {
+                self.executeFinallyBlock()
+                return
             }
+            if let nextChain = self.nextChain {
+                nextChain.execute(shouldContinue: true)
+                return
+            }
+            self.executeFinallyBlock()
         }
     }
     
-    private func runOnMain(_ block: @escaping () -> Void) {
-        if Thread.isMainThread {
-            block()
-        } else {
-            DispatchQueue.main.async { block() }
+    private func runOnGlobal(_ block: @escaping () -> Void) {
+        guard !Thread.isMainThread else {
+            DispatchQueue.global().async { block() }
+            return
         }
+        block()
+    }
+    
+    private func runOnMain(_ block: @escaping () -> Void) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { block() }
+            return
+        }
+        block()
     }
 }
