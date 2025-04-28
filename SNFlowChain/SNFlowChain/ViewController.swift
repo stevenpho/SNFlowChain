@@ -18,31 +18,51 @@ class ViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        SNFlowChain.start()
-            .log(message: "start")
-            .then {[weak self] isContinue in
-            let a = A()
-            a.didDissmiss = {
-                isContinue(true)
+       SNFlowChain(actios: [
+            self.showVCA(),
+            self.showVCB()
+        ], finished: {
+            print("完成")
+        }).start()
+    }
+    
+    func showVCA() -> SNFlowChain.Action {
+        return SNFlowChain.Action { actionContext in
+            let a = A {
+                actionContext(.next)
             }
-            self?.present(a, animated: true)
-            }.delay(seconds: 3)
-            .log(message: "start1")
-            .if(condition: {[weak self] in
-                return self?.shouldShow ?? false
-            })
-            .then {[weak self] isContinue in
-            let a = A()
-            a.didDissmiss = {
-                isContinue(true)
-            }
-            self?.present(a, animated: true)
-        }.finally {[weak self] in
-            print("🎉 流程完成")
-            self?.dismiss(animated: true)
+            self.present(a, animated: true)
         }
     }
+    
+    func showVCB() -> SNFlowChain.Action {
+        return SNFlowChain.Action { actionContext in
+            let b = B()
+            b.view.backgroundColor = .green
+            self.present(b, animated: true)
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                DispatchQueue.main.async {
+                    self.dismiss(animated: true) {
+                        getSceneDelegate()?.window?.rootViewController = UIViewController()
+                        actionContext(.finished)
+                    }
+                }
+            }
+        }
+    }
+}
 
+func getSceneDelegate() -> SceneDelegate?{
+    guard Thread.isMainThread else {return nil}
+    guard let scene = UIApplication.shared.connectedScenes.first else {return nil}
+    guard let sceneDelegate = scene.delegate as? SceneDelegate else {return nil}
+    return sceneDelegate
+}
+
+func getAppDelegate() -> AppDelegate?{
+    guard Thread.isMainThread else {return nil}
+    guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {return nil}
+    return appDelegate
 }
 
 class A: UIViewController {
