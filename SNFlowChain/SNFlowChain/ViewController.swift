@@ -18,18 +18,64 @@ class ViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-       SNFlowChain(actios: [
-            self.showVCA(),
-            self.showVCB()
-        ], finished: {
-            print("完成")
+        // Example: 1
+//        SNFlowChain(actios: [
+//            self.showVCA(),
+//            self.showVCB(),
+//            .then {
+//                self.view.backgroundColor = .green
+//            }
+//        ], finished: {
+//            print("完成")
+//            self.view.backgroundColor = .red
+//        }).start()
+        // Example: 2
+//        SNFlowChain.builder(actios: {
+//            SNAction.log("1")
+//            SNAction.then {
+//                self.view.backgroundColor = .blue
+//            }
+//            SNAction.log("2")
+//            SNAction.delay(onQueue: .main, seconds: 3)
+//            SNAction.log("--------")
+//            
+//            SNAction.log("3")
+//            
+//            SNAction { actionContext in
+//                self.view.backgroundColor = .yellow
+//                actionContext(.onStop)
+//            }
+//        }, finished: {
+//            print("完成")
+//            self.view.backgroundColor = .red
+//        }).start()
+        
+        // Ecample 3
+        SNFlowChain(builderActios: {
+            SNAction.log("1")
+            SNAction.then {
+                self.view.backgroundColor = .blue
+            }
+            SNAction.log("2")
+            SNAction.delay(onQueue: .main, seconds: 3)
+            SNAction.log("--------")
+            
+            SNAction.log("3")
+            
+            SNAction { actionContext in
+                print("完成")
+                self.view.backgroundColor = .yellow
+                actionContext(.onStop)
+            }
+        }, finished: {
+            
         }).start()
     }
     
     func showVCA() -> SNFlowChain.Action {
         return SNFlowChain.Action { actionContext in
             let a = A {
-                actionContext(.next)
+                actionContext(.onNext)
             }
             self.present(a, animated: true)
         }
@@ -44,7 +90,7 @@ class ViewController: UIViewController {
                 DispatchQueue.main.async {
                     self.dismiss(animated: true) {
                         getSceneDelegate()?.window?.rootViewController = UIViewController()
-                        actionContext(.finished)
+                        actionContext(.onFinished)
                     }
                 }
             }

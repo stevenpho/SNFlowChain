@@ -6,33 +6,41 @@
 //
 
 import Foundation
+
+typealias SNAction = SNFlowChain.Action
+
 /// 可以不需要加上 weak self 會自動釋放
 // 不用擔心memory leak 因為是@escaping閉包 加上Action class會建立在父類別實體class上生命週期綁在上面
 class SNFlowChain {
     let actios: [Action]
-    let finished: FinishedBlock
+    let finished: FinishedBlock?
     var index = 0
     
-    init(actios: [Action], finished: @escaping FinishedBlock) {
+    init(actios: [Action], finished: FinishedBlock? = nil) {
         self.actios = actios
         self.finished = finished
     }
     
+    init(@SNFlowChainActionBuilder builderActios: () -> [Action], finished: FinishedBlock? = nil) {
+        self.actios = builderActios()
+        self.finished = finished
+    }
+    
     func start() {
-        print("start action: \(self.index)")
+        //print("start action: \(self.index)")
         guard let firstAction = self.actios[safe: self.index] else {
-            self.finished()
+            self.finished?()
             return
         }
         firstAction.action { actionContext in
-            print(actionContext)
+            //print(actionContext)
             switch actionContext {
-            case .next:
+            case .onNext:
                 self.index += 1
                 self.start()
                 return
-            case .stop, .finished:
-                self.finished()
+            case .onStop, .onFinished:
+                self.finished?()
                 return
             }
         }
@@ -43,6 +51,7 @@ class SNFlowChain {
 extension SNFlowChain {
     typealias FinishedBlock = () -> Void
     typealias StepBlock = (@escaping(_ actionContext: ActionStyle) -> Void) -> Void
+    typealias ThenBlock = () -> Void
     class Action {
         let action: StepBlock
         init(action: @escaping StepBlock) {
@@ -51,214 +60,166 @@ extension SNFlowChain {
     }
     
     enum ActionStyle: Equatable {
-        case next
-        case stop
-        case finished
+        case onNext
+        case onStop
+        case onFinished
+    }
+    
+    enum QueueStyle: Equatable {
+        case main
+        case global
+        case none
     }
 }
-//class SNFlowChain {
-//    
-//    enum Queue : Equatable {
-//        case main
-//        case global
-//        case none
+
+// MARK: SNFlowChain Action Flow
+extension SNFlowChain.Action {
+    static func then(onQueue: SNFlowChain.QueueStyle = .none, action: @escaping SNFlowChain.ThenBlock) -> SNFlowChain.Action{
+        return SNFlowChain.Action { actionStyle in
+            switch onQueue {
+            case .main:
+                DispatchQueue.main.async {
+                    action()
+                    actionStyle(.onNext)
+                }
+            case .global:
+                DispatchQueue.global().async {
+                    action()
+                    actionStyle(.onNext)
+                }
+            case .none:
+                action()
+                actionStyle(.onNext)
+            }
+        }
+    }
+    
+    static func log(_ items: Any...) -> SNFlowChain.Action{
+        return SNFlowChain.Action { actionStyle in
+            print("Log: \(items)")
+            actionStyle(.onNext)
+        }
+    }
+    
+    static func delay(onQueue: SNFlowChain.QueueStyle, seconds: TimeInterval) -> SNFlowChain.Action{
+        return SNFlowChain.Action { actionStyle in
+            switch onQueue {
+            case .main:
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                    actionStyle(.onNext)
+                }
+            case .global:
+                DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+                    actionStyle(.onNext)
+                }
+            case .none:
+                actionStyle(.onNext)
+            }
+        }
+    }
+}
+
+// MARK: SNFlowAction DSL Builder
+@resultBuilder
+struct SNFlowChainActionBuilder {
+    static func buildBlock(_ actions: SNFlowChain.Action...) -> [SNFlowChain.Action] {
+        return actions
+    }
+    
+//    static func buildPartialBlock(first: SNFlowChain.Action) -> SNFlowChain.Action {
+//        <#code#>
 //    }
-//    
-//    @discardableResult
-//    static func start() -> SNFlowChain {
-//        return SNFlowChain()
+    
+    static func buildOptional(_ component: SNFlowChain.Action?) -> SNFlowChain.Action {
+        component ?? .then {}
+    }
+    
+    static func buildEither(first component: SNFlowChain.Action) -> SNFlowChain.Action {
+        component
+    }
+    
+    static func buildEither(second component: SNFlowChain.Action) -> SNFlowChain.Action {
+        component
+    }
+    
+    static func buildExpression(_ expression: SNFlowChain.Action) -> SNFlowChain.Action {
+        expression
+    }
+    
+//    static func buildFinalResult(_ component: SNFlowChain) -> <#Result#> {
+//        <#code#>
 //    }
-//    
-//    typealias StepBlock = (@escaping (_ isContiune: Bool) -> Void) -> Void
-//    typealias CatchBlock = (Error) -> Void
-//    typealias FinallyBlock = () -> Void
-//    private var id = 0
-//    private var queue : Queue = .none
-//    private var currentStep: StepBlock?
-//    private var lastChain: SNFlowChain?
-//    private var nextChain: SNFlowChain?
-//    private var finallyBlock: FinallyBlock?
-//    private var delaySeconds: TimeInterval?
-//    private var conditionCheck: (() -> Bool)?
-//    private var logMessage: String?
-//    
-//    init() {}
-//    
-//    @discardableResult
-//    func commit() -> SNFlowChain {
-//        // 找到最早的 chain 開始點
-//        var root: SNFlowChain = self
-//        while let previous = root.lastChain {
-//            root = previous
+    
+    static func buildArray(_ components: [SNFlowChain.Action]) -> [SNFlowChain.Action] {
+        components
+    }
+    
+    static func buildLimitedAvailability(_ component: SNFlowChain.Action) -> SNFlowChain.Action {
+        component
+    }
+}
+// MARK: SNFlowAction DSL Builder
+extension SNFlowChain.Action {}
+
+
+// MARK: SNFlowChain DSL Builder
+
+extension SNFlowChain {
+    // Test
+//    @SNFlowChainBuilder
+//    static func makeExampleBuilder() -> SNFlowChain {
+//        SNFlowChain.Action { actionStyle in
+//            actionStyle(.onNext)
 //        }
-//        // 執行第一個
-//        root.execute(shouldContinue: true)
-//        return self
-//    }
-//    
-//    @discardableResult
-//    func then(_ step: @escaping StepBlock) -> SNFlowChain {
-//        let next = SNFlowChain()
-//        next.lastChain = self
-//        next.id = self.id + 1
-//        self.currentStep = step
-//        self.nextChain = next
-//        return next
-//    }
-//    
-//    @discardableResult
-//    func finally(_ handler: @escaping FinallyBlock) -> SNFlowChain {
-//        self.finallyBlock = handler
-//        self.lastChain?.finally(handler)
-//        return self
-//    }
-//    
-//    @discardableResult
-//    func delay(seconds: TimeInterval) -> SNFlowChain {
-//        self.delaySeconds = seconds
-//        return self
-//    }
-//    
-//    @discardableResult
-//    func `if`(condition: @escaping () -> Bool) -> SNFlowChain {
-//        self.conditionCheck = condition
-//        return self
-//    }
-//    
-//    @discardableResult
-//    func queue(_ queue: Queue) -> SNFlowChain {
-//        self.queue = queue
-//        return self
-//    }
-//    
-//    @discardableResult
-//    func log(message: String) -> SNFlowChain {
-//        self.logMessage = message
-//        return self
-//    }
-//    
-//    private func executeFinallyBlock() {
-//        self.finallyBlock?()
-//        self.destroy()
-//    }
-//    
-//    private func destroy() {
-//        
-//        if (self.currentStep != nil) {
-//            self.currentStep = nil
-//        }
-//        
-//        if (self.finallyBlock != nil) {
-//            self.finallyBlock = nil
-//        }
-//        
-//        if (self.conditionCheck != nil) {
-//            self.conditionCheck = nil
-//        }
-//        
-//        if (self.lastChain != nil) {
-//            self.lastChain?.destroy()
-//            return
-//        }
-//    }
-//    
-//    private func showLogMessage() {
-//        guard let message = self.logMessage else {return}
-//        print("[LOG] \(message)")
-//    }
-//    
-//    private func execute(shouldContinue: Bool) {
-//        // Log Message
-//        self.showLogMessage()
-//        
-//        guard shouldContinue else {
-//            self.executeFinallyBlock()
-//            return
-//        }
-//        
-//        // Condition Check
-//        guard let condition = self.conditionCheck else {
-//            self.checkRunDealyIfNeeded()
-//            return
-//        }
-//        
-//        guard condition() else {
-//            self.executeFinallyBlock()
-//            return
-//        }
-//        
-//        self.checkRunDealyIfNeeded()
-//    }
-//    
-//    private func checkRunDealyIfNeeded() {
-//        switch self.queue {
-//        case .main:
-//            // Delay
-//            guard let delay = self.delaySeconds else {
-//                self.runOnMain { [weak self] in
-//                    self?.runStep()
-//                }
-//                return
-//            }
-//            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-//                self.runStep()
-//            }
-//        case .global:
-//            // Delay
-//            guard let delay = self.delaySeconds else {
-//                self.runOnGlobal { [weak self] in
-//                    self?.runStep()
-//                }
-//                return
-//            }
-//            DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
-//                self.runStep()
-//            }
-//        case .none:
-//            // Delay
-//            guard let delay = self.delaySeconds else {
-//                self.runStep()
-//                return
-//            }
-//            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-//                self.runStep()
-//            }
+//        SNFlowChain.Action { actionStyle in
+//            actionStyle(.onFinished)
 //        }
 //    }
-//    
-//    private func runStep() {
-//        guard let step = self.currentStep else {
-//            self.executeFinallyBlock()
-//            return
-//        }
-//        
-//        step { [weak self] shouldContinue in
-//            guard let self = self else { return }
-//            guard shouldContinue else {
-//                self.executeFinallyBlock()
-//                return
-//            }
-//            if let nextChain = self.nextChain {
-//                nextChain.execute(shouldContinue: true)
-//                return
-//            }
-//            self.executeFinallyBlock()
-//        }
+    /// Builder version use
+    static func builder(@SNFlowChainActionBuilder actios: () -> [SNAction], finished: FinishedBlock? = nil) -> SNFlowChain {
+        return SNFlowChain(actios: actios(), finished: finished)
+    }
+}
+
+//@resultBuilder
+//struct SNFlowChainBuilder {
+//    static func buildBlock(_ actions: SNFlowChain.Action...) -> SNFlowChain {
+//        return SNFlowChain(actios: actions)
 //    }
 //    
-//    private func runOnGlobal(_ block: @escaping () -> Void) {
-//        guard !Thread.isMainThread else {
-//            DispatchQueue.global().async { block() }
-//            return
-//        }
-//        block()
+//    static func buildPartialBlock(first: SNFlowChain) -> SNFlowChain {
+//        <#code#>
 //    }
 //    
-//    private func runOnMain(_ block: @escaping () -> Void) {
-//        guard Thread.isMainThread else {
-//            DispatchQueue.main.async { block() }
-//            return
-//        }
-//        block()
+//    static func buildOptional(_ component: SNFlowChain?) -> SNFlowChain {
+//        <#code#>
+//    }
+//    
+//    static func buildEither(first component: SNFlowChain) -> SNFlowChain {
+//        <#code#>
+//    }
+//    
+//    static func buildEither(second component: SNFlowChain) -> SNFlowChain {
+//        <#code#>
+//    }
+//    
+//    static func buildExpression(_ expression: <#Expression#>) -> SNFlowChain {
+//        <#code#>
+//    }
+//    
+//    static func buildFinalResult(_ component: SNFlowChain) -> <#Result#> {
+//        <#code#>
+//    }
+//    
+//    static func buildArray(_ components: [SNFlowChain]) -> SNFlowChain {
+//        <#code#>
+//    }
+//    
+//    static func buildLimitedAvailability(_ component: SNFlowChain) -> SNFlowChain {
+//        <#code#>
 //    }
 //}
+
+
+
+
