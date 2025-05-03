@@ -9,6 +9,11 @@ import Foundation
 
 typealias SNAction = SNFlowChain.Action
 
+
+protocol SNActionFlowStep {
+    var action: SNFlowChain.StepBlock { get }
+}
+
 /// 可以不需要加上 weak self 會自動釋放
 // 不用擔心memory leak 因為是@escaping閉包 加上Action class會建立在父類別實體class上生命週期綁在上面
 class SNFlowChain {
@@ -52,6 +57,7 @@ extension SNFlowChain {
     typealias FinishedBlock = () -> Void
     typealias StepBlock = (@escaping(_ actionContext: ActionStyle) -> Void) -> Void
     typealias ThenBlock = () -> Void
+    typealias IfBlock = () -> Bool
     class Action {
         let action: StepBlock
         init(action: @escaping StepBlock) {
@@ -66,30 +72,74 @@ extension SNFlowChain {
     }
     
     enum QueueStyle: Equatable {
-        case main
-        case global
+        case main(createStyle: QueueCreateStyle)
+        case global(createStyle: QueueCreateStyle)
+        case none
+    }
+    
+    enum QueueCreateStyle: Equatable {
+        /// 建立新的async queue
+        case new
+        /// 沿用當前同個queue 如果不是目標的queue style會檢查來決定要不要建立新的queue
         case none
     }
 }
 
 // MARK: SNFlowChain Action Flow
 extension SNFlowChain.Action {
+    
+    static func `if`(onQueue: SNFlowChain.QueueStyle = .none, condition: @escaping SNFlowChain.IfBlock) -> SNFlowChain.Action{
+        return SNFlowChain.Action { actionStyle in
+            switch condition() {
+            case true:
+                actionStyle(.onNext)
+            case false:
+                actionStyle(.onStop)
+            }
+        }
+    }
+    
     static func then(onQueue: SNFlowChain.QueueStyle = .none, action: @escaping SNFlowChain.ThenBlock) -> SNFlowChain.Action{
         return SNFlowChain.Action { actionStyle in
-            switch onQueue {
-            case .main:
-                DispatchQueue.main.async {
-                    action()
-                    actionStyle(.onNext)
-                }
-            case .global:
-                DispatchQueue.global().async {
-                    action()
-                    actionStyle(.onNext)
-                }
-            case .none:
+            let doAction = {
                 action()
                 actionStyle(.onNext)
+            }
+            switch onQueue {
+            case .main(let createStyle):
+                let doMainAction = {
+                    DispatchQueue.main.async {
+                        doAction()
+                    }
+                }
+                switch createStyle {
+                case .new:
+                    doMainAction()
+                case .none:
+                    guard Thread.isMainThread else {
+                        doMainAction()
+                        return
+                    }
+                    doAction()
+                }
+            case .global(let createStyle):
+                let doGlobalAction = {
+                    DispatchQueue.global().async {
+                        doAction()
+                    }
+                }
+                switch createStyle {
+                case .new:
+                    doGlobalAction()
+                case .none:
+                    guard Thread.isGlobalThread else {
+                        doGlobalAction()
+                        return
+                    }
+                    doAction()
+                }
+            case .none:
+                doAction()
             }
         }
     }
@@ -104,11 +154,11 @@ extension SNFlowChain.Action {
     static func delay(onQueue: SNFlowChain.QueueStyle, seconds: TimeInterval) -> SNFlowChain.Action{
         return SNFlowChain.Action { actionStyle in
             switch onQueue {
-            case .main:
+            case .main(let createStyle):
                 DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
                     actionStyle(.onNext)
                 }
-            case .global:
+            case .global(let createStyle):
                 DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
                     actionStyle(.onNext)
                 }

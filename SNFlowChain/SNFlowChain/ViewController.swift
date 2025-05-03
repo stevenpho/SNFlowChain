@@ -20,15 +20,21 @@ class ViewController: UIViewController {
         super.viewDidAppear(animated)
         // Example: 1
 //        SNFlowChain(actios: [
+//            .log("1"),
 //            self.showVCA(),
+//            .if(condition: {
+//                return true
+//            }),
+//            .log("2"),
 //            self.showVCB(),
-//            .then {
+//            .then(onQueue: .main(createStyle: .new)) {
 //                self.view.backgroundColor = .green
 //            }
 //        ], finished: {
 //            print("完成")
 //            self.view.backgroundColor = .red
 //        }).start()
+        
         // Example: 2
 //        SNFlowChain.builder(actios: {
 //            SNAction.log("1")
@@ -53,23 +59,30 @@ class ViewController: UIViewController {
         // Ecample 3
         SNFlowChain(builderActios: {
             SNAction.log("1")
-            SNAction.then {
+            SNAction.then(onQueue: .main(createStyle: .new)) {
                 self.view.backgroundColor = .blue
             }
             SNAction.log("2")
-            SNAction.delay(onQueue: .main, seconds: 3)
+            SNAction.if {
+                return true
+            }
+            SNAction.log("2.5")
+            SNAction.delay(onQueue: .main(createStyle: .none), seconds: 3)
             SNAction.log("--------")
             
             SNAction.log("3")
             
             SNAction { actionContext in
-                print("完成")
+                print("stop")
                 self.view.backgroundColor = .yellow
                 actionContext(.onStop)
             }
         }, finished: {
-            
+            print("完成")
         }).start()
+        
+        //Global.setRootViewController(UIViewController())
+        // Example4
     }
     
     func showVCA() -> SNFlowChain.Action {
@@ -89,26 +102,13 @@ class ViewController: UIViewController {
             DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
                 DispatchQueue.main.async {
                     self.dismiss(animated: true) {
-                        getSceneDelegate()?.window?.rootViewController = UIViewController()
+                        Global.setRootViewController(UIViewController())
                         actionContext(.onFinished)
                     }
                 }
             }
         }
     }
-}
-
-func getSceneDelegate() -> SceneDelegate?{
-    guard Thread.isMainThread else {return nil}
-    guard let scene = UIApplication.shared.connectedScenes.first else {return nil}
-    guard let sceneDelegate = scene.delegate as? SceneDelegate else {return nil}
-    return sceneDelegate
-}
-
-func getAppDelegate() -> AppDelegate?{
-    guard Thread.isMainThread else {return nil}
-    guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else {return nil}
-    return appDelegate
 }
 
 class A: UIViewController {
